@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>QR Code Decryptor</title>
+  <script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/crypto-js@4.1.1/crypto-js.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #result { margin-top: 20px; }
+    video { width: 100%; max-width: 300px; height: auto; }
+  </style>
+</head>
+<body>
+  <h2>QR Code Decryptor</h2>
+  <input type="file" accept="image/*" id="qr-input" />
+  <button id="camera-btn">Scan with Camera</button>
+  <video id="video" style="display:none;"></video>
+  <div id="result"></div>
+  <script>
+    function generateKey(password) {
+      // SHA-256 hash, return as WordArray (raw bytes)
+      return CryptoJS.SHA256(password);
+    }
+
+    function decryptPayload(encrypted, password, roomCode) {
+      try {
+        const key = generateKey(password);
+        const decrypted = CryptoJS.AES.decrypt(encrypted, key, { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 });
+        const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+        if (!decryptedText) throw new Error();
+        const payload = JSON.parse(decryptedText);
+        if (payload.room !== roomCode) return "❌ Room code mismatch!";
+        return `✅ Message: ${payload.data}<br>🏷 Room: ${payload.room}<br>🕒 Timestamp: ${payload.timestamp}`;
+      } catch {
+        return "❌ Invalid password or corrupted QR.";
+      }
+    }
+
+    // File upload QR scan (existing)
+    document.getElementById('qr-input').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function() {
+        const img = new Image();
+        img.onload = function() {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, canvas.width, canvas.height);
+          if (code) {
+            handleDecryption(code.data);
+          } else {
+            document.getElementById('result').innerText = "❌ Unreadable QR code";
+          }
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Camera QR scan
+    document.getElementById('camera-btn').onclick = function() {
+      const video = document.getElementById('video');
+      video.style.display = 'block';
+      document.getElementById('result').innerText = 'Camera on...';
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(function(stream) {
+          video.srcObject = stream;
+          video.setAttribute('playsinline', true);
+          video.play();
+          requestAnimationFrame(tick);
+        });
+      function tick() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          const canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, canvas.width, canvas.height);
+          if (code) {
+            video.srcObject.getTracks().forEach(track => track.stop());
+            video.style.display = 'none';
+            handleDecryption(code.data);
+            return;
+          }
+        }
+        requestAnimationFrame(tick);
+      }
+    };
+
+    function handleDecryption(encrypted) {
+      const password = prompt("Enter password to decrypt:");
+      const roomCode = prompt("Enter room code:");
+      const result = decryptPayload(encrypted, password, roomCode);
+      document.getElementById('result').innerHTML = result;
+    }
+  </script>
+</body>
+</html>
